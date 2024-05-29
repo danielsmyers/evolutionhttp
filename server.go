@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -216,7 +217,6 @@ func execCommand(device deviceIo, cmd evoRequest) (*evoResponse, error) {
 }
 
 func (h *commandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("--------------------------------------------")
 	w.Header().Set("Connection", "close")
 	w.Header().Set("Content-Type", "application/json")
 	cmdBytes, err := ioutil.ReadAll(r.Body)
@@ -226,7 +226,6 @@ func (h *commandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	cmd := evoRequest(string(cmdBytes))
-	log.Printf("Command: '%s'", cmd)
 
 	resultCh := h.addOp(cmd)
 	result := <-resultCh
@@ -237,7 +236,7 @@ func (h *commandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.StatusInternalServerError)
 		return
 	}
-	log.Printf("Response: %v", result.response)
+	log.Printf("Command %v, Response: %v", cmd, result.response)
 	fmt.Fprintf(w, `{"response": "%s"}`+"\n", result.response.payload)
 }
 
@@ -258,8 +257,11 @@ func exportNewHandler(device deviceIo) *http.Server {
 }
 
 func main() {
+	device := flag.String("device", "/dev/ttyUSB0", "Name of file corresponding to device to control")
+	flag.Parse()
+
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	if err := exec.Command("/usr/bin/stty", "-F", "/dev/ttyUSB0", "9600", "cs8", "-cstopb", "-parenb", "-echo").Run(); err != nil {
+	if err := exec.Command("stty", "-F", *device, "9600", "cs8", "-cstopb", "-parenb", "-echo").Run(); err != nil {
 		log.Fatalf("stty: %s", err)
 	}
 	ttyFile := "/dev/ttyUSB0"
