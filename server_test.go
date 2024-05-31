@@ -103,7 +103,7 @@ func TestWritePrioritization(t *testing.T) {
 			go func() {
 				resp, err := http.Post(server.URL+"/command", "text/plain", strings.NewReader(cmd))
 				if err != nil {
-					t.Fatalf("Error sending command '%s': %v", cmd, err)
+					log.Fatalf("Error sending command '%s': %v", cmd, err)
 				}
 				defer resp.Body.Close()
 				body, _ := ioutil.ReadAll(resp.Body)
@@ -262,12 +262,12 @@ func TestCommands(t *testing.T) {
 				client := &http.Client{}
 				r, err := client.Do(req)
 				if err != nil {
-					t.Fatalf("Error sending request: %v", err)
+					log.Fatalf("Error sending request: %v", err)
 				}
 				defer r.Body.Close()
 				body, err := ioutil.ReadAll(r.Body)
 				if err != nil {
-					t.Fatalf("Error reading body")
+					log.Fatalf("Error reading body")
 				}
 				respCode <- r.StatusCode
 				respBody <- string(body)
