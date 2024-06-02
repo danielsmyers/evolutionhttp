@@ -40,10 +40,10 @@ func (e *evoResponse) String() string {
 // response to `req`.
 func parseEvoResponse(rawResp string, req evoRequest) (*evoResponse, error) {
 	rawResp = sanitizeUtf8(rawResp) // Drop weird extended-ASCII degree symbol
-	re := regexp.MustCompile("([[:alnum:]]+):(.*)\\n")
+	re := regexp.MustCompile("([[:alnum:]]+):(.*)")
 	matchParts := re.FindStringSubmatch(rawResp)
 	if matchParts == nil {
-		return nil, fmt.Errorf("Unparseable response to %v: %v", req, rawResp)
+		return nil, fmt.Errorf("Unparseable response to %v: '%v'", req, rawResp)
 	}
 	echoedReq := matchParts[1]
 	payload := matchParts[2]
@@ -108,8 +108,23 @@ type commandHandler struct {
 func (h *commandHandler) Open(device deviceIo) {
 	h.workCond = sync.NewCond(&h.mu)
 
-	// Goroutine to handle command processing (owns the serial port and
-	// interactions with the device).
+	// Goroutine to handle raw reads.
+	respCh := make(chan string)
+	go func() {
+		for {
+			resp, err := device.ReadString('\n')
+			if err != nil {
+				log.Fatalf("ReadString: %v", err)
+			}
+			resp = strings.TrimSpace(resp)
+			if resp != "" {
+				log.Printf("ReadString: %v", resp)
+				respCh <- resp
+			}
+		}
+	}()
+
+	// Goroutine to handle command processing (writes and waiting for responses).
 	go func() {
 		for {
 			func() {
@@ -119,7 +134,7 @@ func (h *commandHandler) Open(device deviceIo) {
 				const numCommandRetries = 3
 				var lastError error = nil
 				for i := 0; i < numCommandRetries; i++ {
-					res, err := execCommand(device, op.command)
+					res, err := execCommand(device, respCh, op.command)
 					if err != nil {
 						log.Printf("(error on attempt count %v): %v", i, err)
 						lastError = err
@@ -135,6 +150,23 @@ func (h *commandHandler) Open(device deviceIo) {
 			}()
 		}
 	}()
+}
+
+// Executes `cmd` against the device.
+func execCommand(deviceWriter deviceIo, deviceReader <-chan string, cmd evoRequest) (*evoResponse, error) {
+	// Device spec promises a response within 5 seconds.
+	var commandTimeout = 6 * time.Second
+
+	// Send the command
+	deviceWriter.WriteString(fmt.Sprintf("%s\n", cmd))
+	deviceWriter.Flush()
+
+	select {
+	case rawResp := <-deviceReader:
+		return parseEvoResponse(rawResp, cmd)
+	case <-time.After(commandTimeout):
+		return nil, fmt.Errorf("Timeout: %v", cmd)
+	}
 }
 
 // blockForNextOp returns the next operation to execute, blocking until one
@@ -184,54 +216,23 @@ func (h *commandHandler) addOp(cmd evoRequest) <-chan opResult {
 	return op.ch
 }
 
-func execCommand(device deviceIo, cmd evoRequest) (*evoResponse, error) {
-	var commandTimeout = 6 * time.Second
-
-	// Send the command
-	device.WriteString(fmt.Sprintf("%s\n", cmd))
-	device.Flush()
-
-	// Wait for the response
-	ch := make(chan string)
-	go func() {
-		// Read the response
-		resp, err := device.ReadString('\n')
-		if err != nil {
-			log.Fatalf("ReadString: %s", err)
-		}
-
-		// Discard the extra newline.
-		_, err = device.ReadString('\n')
-		if err != nil {
-			log.Fatalf("Failed to read newline")
-		}
-		ch <- resp
-	}()
-
-	select {
-	case rawResp := <-ch:
-		return parseEvoResponse(rawResp, cmd)
-	case <-time.After(commandTimeout):
-		return nil, fmt.Errorf("Timeout: %v", cmd)
-	}
-}
-
 func (h *commandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "close")
 	w.Header().Set("Content-Type", "application/json")
+	defer r.Body.Close()
 	cmdBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("Failed reading body: %v", err)
 		http.Error(w, fmt.Sprintf("%v", err), http.StatusInternalServerError)
 		return
 	}
-	defer r.Body.Close()
 	cmd := evoRequest(string(cmdBytes))
 
 	resultCh := h.addOp(cmd)
 	result := <-resultCh
 	if result.err != nil {
 		// Error
-		log.Printf("Failed sending command %v: %v", cmd, err)
+		log.Printf("Failed sending command %v: %v", cmd, result.err)
 		http.Error(w, fmt.Sprintf("Failed to send %v: %v", cmd, result.err),
 			http.StatusInternalServerError)
 		return

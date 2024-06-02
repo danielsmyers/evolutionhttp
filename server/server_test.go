@@ -3,6 +3,7 @@ package main
 import (
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -259,8 +260,7 @@ func TestCommands(t *testing.T) {
 			respBody := make(chan string)
 			respCode := make(chan int)
 			go func() {
-				client := &http.Client{}
-				r, err := client.Do(req)
+				r, err := server.Client().Do(req)
 				if err != nil {
 					log.Fatalf("Error sending request: %v", err)
 				}
@@ -324,8 +324,7 @@ func TestInvalidCommand(t *testing.T) {
 	}()
 
 	req, _ := http.NewRequest("POST", server.URL+"/command", strings.NewReader(cmd))
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := server.Client().Do(req)
 	if err != nil {
 		t.Fatalf("Error sending request: %v", err)
 	}
@@ -340,4 +339,60 @@ func TestInvalidCommand(t *testing.T) {
 	if !strings.Contains(string(body), "Rejected command") {
 		t.Errorf("Got %v, want a string containing 'Rejected command'", string(body))
 	}
+}
+
+func TestConcurrency(t *testing.T) {
+	// Test plan: send a concurrent mix of reads and writes using a real HTTP server.
+	// Verify all requests return with code 200.
+	fakeDevice := newFakeDevice()
+	fakeDevice.start()
+
+	handler := new(commandHandler)
+	handler.Open(fakeDevice)
+
+	m := http.NewServeMux()
+	m.Handle("/command", handler)
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: m,
+	}
+	server.SetKeepAlivesEnabled(true)
+	go server.ListenAndServe()
+
+	for i := 0; i < 6; i++ {
+		go func() {
+			for {
+				client := &http.Client{
+					Timeout: 30 * time.Second,
+				}
+				cmd := ""
+				if rand.Int()%100 < 50 {
+					cmd = "S1Z1MODE!HEAT"
+				} else {
+					cmd = "S1Z1MODE?"
+				}
+				req, _ := http.NewRequest("POST", "http://localhost:8080/command", strings.NewReader(cmd))
+				resp, err := client.Do(req)
+				if err != nil {
+					log.Fatalf("Error sending request: %v", err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode != 200 {
+					log.Fatalf("Got %v, want %v", resp.StatusCode, 200)
+				}
+			}
+		}()
+	}
+	go func() {
+		for {
+			cmd := <-fakeDevice.testCommandChan
+			if strings.Contains(cmd, "!") {
+				fakeDevice.testResponseChan <- "S1Z1MODE:ACK"
+			} else {
+				fakeDevice.testResponseChan <- "S1Z1MODE:COOL"
+			}
+		}
+	}()
+	<-time.After(10 * time.Second)
 }
