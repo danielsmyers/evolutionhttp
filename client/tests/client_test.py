@@ -4,7 +4,7 @@ import logging
 import unittest
 
 from aiohttp import web
-from client import BryantEvolutionClient
+from src.evolutionhttp import BryantEvolutionClient
 
 _LOGGER = logging.getLogger(__name__)
 
