@@ -44,7 +44,7 @@ class BryantEvolutionLocalClient:
             self._tty = tty
 
         async def open(self) -> None:
-            self._file = await aiofiles.open(self._tty, mode="r+")
+            self._file = await aiofiles.open(self._tty, mode="a+")
 
         async def write(self, s: str) -> None:
             await self._file.write(f"{s}\n")
