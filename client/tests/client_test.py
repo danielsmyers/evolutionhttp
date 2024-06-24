@@ -8,9 +8,11 @@ from src.evolutionhttp import BryantEvolutionClient
 
 _LOGGER = logging.getLogger(__name__)
 
+
 # Fake implementation of server.go.
 class FakeBryantEvolutionServer:
     """Fake implementation of the server that this client targets."""
+
     def __init__(self):
         self.data = {
             "S1Z1RT": "72F",
@@ -42,16 +44,18 @@ class FakeBryantEvolutionServer:
 
         return web.json_response({"response": "NAK"})
 
+
 class TestBryantEvolutionClient(unittest.IsolatedAsyncioTestCase):
     """Tests for BryantEvolutionClient."""
+
     async def asyncSetUp(self):
         # Create and start the fake server
         app = web.Application()
         self.fake_server = FakeBryantEvolutionServer()
-        app.add_routes([web.post('/command', self.fake_server.handle_command)])
+        app.add_routes([web.post("/command", self.fake_server.handle_command)])
         self.runner = web.AppRunner(app)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, 'localhost', 8080)  # Choose a free port
+        self.site = web.TCPSite(self.runner, "localhost", 8080)  # Choose a free port
         await self.site.start()
 
     async def asyncTearDown(self):
@@ -87,7 +91,6 @@ class TestBryantEvolutionClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await client.read_heating_setpoint(), 68)
         self.assertEqual(await client.read_hvac_mode(), ("COOL", False))
 
-
         # Test error handling (invalid command)
         result = await client._api_request("INVALID_COMMAND")
         self.assertEqual(result, "NAK")
@@ -102,6 +105,7 @@ class TestBryantEvolutionClient(unittest.IsolatedAsyncioTestCase):
         client = BryantEvolutionClient("localhost", "2", "2")
         self.assertEqual(await client.read_hvac_mode(), ("COOL", True))
         self.assertEqual(await client.read_cooling_setpoint(), 60)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,9 +8,10 @@ import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
 
-def _parse_temperature(response: str) -> Optional[int]:
+
+def _parse_temperature(response: Optional[str]) -> Optional[int]:
     if response is not None:
-        m = re.match("([0-9]+)[A-Z]", response) # E.g., 72F
+        m = re.match("([0-9]+)[A-Z]", response)  # E.g., 72F
         if m and m.group(1):
             return int(m.group(1))
     return None
@@ -19,10 +20,10 @@ def _parse_temperature(response: str) -> Optional[int]:
 class BryantEvolutionClient:
     """
     This class exposes methods to read and set various HVAC parameters.
-    
-    All read methods return None on protocol errors (e.g., HTTP 500). They 
+
+    All read methods return None on protocol errors (e.g., HTTP 500). They
     return "NAK" when the device responds with "NAK."
-    
+
     On a non-successful set_* call, the set may or may not have occurred.
     """
 
@@ -56,7 +57,8 @@ class BryantEvolutionClient:
     async def set_cooling_setpoint(self, temperature: int) -> bool:
         """Sets the cooling setpoint."""
         response = await self._api_request(
-            f"S{self._system_id}Z{self._zone_id}CLSP!{int(temperature)}")
+            f"S{self._system_id}Z{self._zone_id}CLSP!{int(temperature)}"
+        )
         return response == "ACK"
 
     async def read_heating_setpoint(self) -> Optional[int]:
@@ -67,13 +69,14 @@ class BryantEvolutionClient:
     async def set_heating_setpoint(self, temperature: int) -> bool:
         """Sets the heating setpoint."""
         response = await self._api_request(
-            f"S{self._system_id}Z{self._zone_id}HTSP!{int(temperature)}")
+            f"S{self._system_id}Z{self._zone_id}HTSP!{int(temperature)}"
+        )
         return response == "ACK"
 
     async def read_hvac_mode(self) -> Optional[Tuple[str, bool]]:
         """Reads the HVAC mode (heat, cool, etc).
-        
-            Returns the mode and whether or not the system is active.
+
+        Returns the mode and whether or not the system is active.
         """
         response = await self._api_request(f"S{self._system_id}MODE?")
         if not response:
@@ -97,7 +100,9 @@ class BryantEvolutionClient:
         """Sets the HVAC mode."""
         if hvac_mode == "heat_cool":
             hvac_mode = "AUTO"
-        response = await self._api_request(f"S{self._system_id}MODE!{hvac_mode.upper()}")
+        response = await self._api_request(
+            f"S{self._system_id}MODE!{hvac_mode.upper()}"
+        )
         return response == "ACK"
 
     async def read_fan_mode(self) -> Optional[str]:
@@ -106,5 +111,7 @@ class BryantEvolutionClient:
 
     async def set_fan_mode(self, fan_mode: str) -> bool:
         """Sets the fan mode."""
-        response = await self._api_request(f"S{self._system_id}Z{self._zone_id}FAN!{fan_mode}")
+        response = await self._api_request(
+            f"S{self._system_id}Z{self._zone_id}FAN!{fan_mode}"
+        )
         return response == "ACK"
