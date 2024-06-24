@@ -1,6 +1,7 @@
 import aiofiles
 import asyncio
 import logging
+import os
 import re
 
 from abc import ABC, abstractmethod
@@ -44,6 +45,7 @@ class BryantEvolutionLocalClient:
             self._tty = tty
 
         async def open(self) -> None:
+            os.system(f"stty -F {self._tty} 9600 cs8 -cstopb -parenb -echo")
             self._file = await aiofiles.open(self._tty, mode="r+b", buffering=0)
 
         async def write(self, s: str) -> None:
@@ -167,7 +169,10 @@ class BryantEvolutionLocalClient:
         self._check_rep()
         if result is None:
             return None
-        return result.split(":")[1]
+        parts = result.split(":")
+        if len(parts) != 2:
+            _LOGGER.error("Unparseable response: %s" % result)
+        return parts[1]
 
     async def _maybe_process_commands(self) -> None:
         if self._is_cmd_active:
