@@ -51,7 +51,9 @@ class FakeDevIO(BryantEvolutionLocalClient.DevIO):
             if key not in self._state:
                 self._next_resp = "key:NAK"
             else:
-                self._next_resp = f"{key}:{self._state[key]}"
+                self._next_resp = f"{key}:{self._state[key]}".encode(
+                    "ascii", errors="ignore"
+                ).decode()
 
     async def read_next(self) -> str:
         async with self._allow_reads_cond:
@@ -129,8 +131,8 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
     async def test_file_io(self):
         """Test the real device I/O type with a mock file."""
         read_file_chunks = [
-            "S1Z1HTSP:ACK\n",
-            "S1Z1HTSP:97\xf8F\n",
+            b"S1Z1HTSP:ACK\n",
+            b"S1Z1HTSP:97\xf8F\n",
         ]
         file_chunks_iter = iter(read_file_chunks)
 
@@ -146,9 +148,9 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
 
         client = BryantEvolutionLocalClient(1, 1, prod_io)
         assert await client.set_heating_setpoint(97)
-        mock_file_stream.write.assert_called_with("S1Z1HTSP!97\n")
+        mock_file_stream.write.assert_called_with(b"S1Z1HTSP!97\n")
         assert await client.read_heating_setpoint() == 97
-        mock_file_stream.write.assert_called_with("S1Z1HTSP?\n")
+        mock_file_stream.write.assert_called_with(b"S1Z1HTSP?\n")
 
     async def test_timeout(self):
         """Test timeout handling."""

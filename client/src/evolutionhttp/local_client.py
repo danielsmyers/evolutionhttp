@@ -44,14 +44,18 @@ class BryantEvolutionLocalClient:
             self._tty = tty
 
         async def open(self) -> None:
-            self._file = await aiofiles.open(self._tty, mode="a+")
+            self._file = await aiofiles.open(self._tty, mode="r+b", buffering=0)
 
         async def write(self, s: str) -> None:
-            await self._file.write(f"{s}\n")
+            await self._file.write(f"{s}\n".encode("ascii"))
 
         async def read_next(self) -> str:
             while True:
-                s = (await self._file.readline()).strip()
+                s: str = (
+                    (await self._file.readline())
+                    .decode("ascii", errors="ignore")
+                    .strip()
+                )
                 if s != "":
                     return s
 
@@ -163,7 +167,7 @@ class BryantEvolutionLocalClient:
         self._check_rep()
         if result is None:
             return None
-        return result.split(":")[1].encode("ascii", errors="ignore").decode()
+        return result.split(":")[1]
 
     async def _maybe_process_commands(self) -> None:
         if self._is_cmd_active:
