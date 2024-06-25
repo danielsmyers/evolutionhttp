@@ -172,6 +172,7 @@ class _CoreClient:
         parts = result.split(":")
         if len(parts) != 2:
             _LOGGER.error("Unparseable response: %s" % result)
+            return None
         return parts[1]
 
     async def _maybe_process_commands(self) -> None:
