@@ -4,7 +4,7 @@ import logging
 import mock
 import unittest
 
-from src.evolutionhttp import BryantEvolutionLocalClient
+from src.evolutionhttp import BryantEvolutionLocalClient, _CoreClient
 from mock import patch
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ aiofiles.threadpool.wrap.register(mock.MagicMock)(
 )
 
 
-class FakeDevIO(BryantEvolutionLocalClient.DevIO):
+class FakeDevIO(_CoreClient.DevIO):
     def __init__(self):
         self._state = {
             "S1Z1RT": "72\xf8F",
@@ -64,21 +64,15 @@ class FakeDevIO(BryantEvolutionLocalClient.DevIO):
 
 
 class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
-    async def test_basic_read_write(self):
-        """Test basics reads and writes."""
-        client = BryantEvolutionLocalClient(1, 1, FakeDevIO())
-        assert await client._send_command("S1Z1HTSP!72") == "ACK"
-        assert await client._send_command("S1Z1HTSP?") == "72F"
-
     async def test_write_reordered(self):
         """Test that a write that arrives while a read is already pending is executed before the read."""
         io = FakeDevIO()
-        client = BryantEvolutionLocalClient(1, 1, io)
-        await client._send_command("S1Z1HTSP!72")
+        client = BryantEvolutionLocalClient(1, 1, _CoreClient(io))
+        await client._client._send_command("S1Z1HTSP!72")
         await io._set_allow_reads(False)
-        t1 = asyncio.create_task(client._send_command("S1Z1HTSP?"))
-        t2 = asyncio.create_task(client._send_command("S1Z1HTSP?"))
-        t3 = asyncio.create_task(client._send_command("S1Z1HTSP!75"))
+        t1 = asyncio.create_task(client._client._send_command("S1Z1HTSP?"))
+        t2 = asyncio.create_task(client._client._send_command("S1Z1HTSP?"))
+        t3 = asyncio.create_task(client._client._send_command("S1Z1HTSP!75"))
 
         # Add a manual yield point. Otherwise, t1-t3 won't start executing until we hit
         # the "await t1" below, which means we will have *already* set io.set_allow_reads(True),
@@ -91,7 +85,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_client_interactions(self):
         """Test basics reads and writes."""
-        client = BryantEvolutionLocalClient(1, 1, FakeDevIO())
+        client = BryantEvolutionLocalClient(1, 1, _CoreClient(FakeDevIO()))
 
         # Test getting values
         current_temp = await client.read_current_temperature()
@@ -119,12 +113,12 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await client.read_hvac_mode(), ("COOL", False))
 
         # Test error handling (invalid command)
-        result = await client._send_command("INVALID_COMMAND")
+        result = await client._client._send_command("INVALID_COMMAND")
         self.assertEqual(result, "NAK")
 
     async def test_second_system(self):
         """Test working with S2 instead of S1."""
-        client = BryantEvolutionLocalClient(2, 2, FakeDevIO())
+        client = BryantEvolutionLocalClient(2, 2, _CoreClient(FakeDevIO()))
         self.assertEqual(await client.read_hvac_mode(), ("COOL", True))
         self.assertEqual(await client.read_cooling_setpoint(), 60)
 
@@ -140,13 +134,14 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
             readline=lambda *args, **kwargs: next(file_chunks_iter)
         )
 
+        client: BryantEvolutionLocalClient = None
         with mock.patch(
             "aiofiles.threadpool.sync_open", return_value=mock_file_stream
         ) as mock_open:
-            prod_io = BryantEvolutionLocalClient.ProdDevIO("unused_filename")
-            await prod_io.open()
+            client = await BryantEvolutionLocalClient.get_client(
+                1, 1, "unused_filename"
+            )  # _CoreClient(prod_io))
 
-        client = BryantEvolutionLocalClient(1, 1, prod_io)
         assert await client.set_heating_setpoint(97)
         mock_file_stream.write.assert_called_with(b"S1Z1HTSP!97\n")
         assert await client.read_heating_setpoint() == 97
@@ -155,9 +150,9 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
     async def test_timeout(self):
         """Test timeout handling."""
         io = FakeDevIO()
-        client = BryantEvolutionLocalClient(1, 1, io)
+        client = BryantEvolutionLocalClient(1, 1, _CoreClient(io))
         await io._set_allow_reads(False)
-        with patch.object(BryantEvolutionLocalClient, "_timeout_sec", 0.1) as p:
+        with patch.object(_CoreClient, "_timeout_sec", 0.1) as p:
             assert not await client.read_heating_setpoint()
 
 
