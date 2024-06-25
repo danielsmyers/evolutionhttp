@@ -157,9 +157,10 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_client_sharing(self):
         """Test that clients for different systems on the same tty reuse the same core client."""
-        c1 = await BryantEvolutionLocalClient.get_client(1, 1, "/dev/null")
-        c2 = await BryantEvolutionLocalClient.get_client(1, 2, "/dev/null")
-        c3 = await BryantEvolutionLocalClient.get_client(1, 2, "/dev/zero")
+        (c1, c2, c3) = await asyncio.gather(
+            BryantEvolutionLocalClient.get_client(1, 1, "/dev/null"),
+            BryantEvolutionLocalClient.get_client(1, 2, "/dev/null"),
+            BryantEvolutionLocalClient.get_client(1, 2, "/dev/zero"))
         assert c1._client is c2._client
         assert c1._client is not c3._client
 
