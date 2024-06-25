@@ -140,7 +140,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         ) as mock_open:
             client = await BryantEvolutionLocalClient.get_client(
                 1, 1, "unused_filename"
-            )  # _CoreClient(prod_io))
+            )
 
         assert await client.set_heating_setpoint(97)
         mock_file_stream.write.assert_called_with(b"S1Z1HTSP!97\n")
@@ -154,6 +154,14 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         await io._set_allow_reads(False)
         with patch.object(_CoreClient, "_timeout_sec", 0.1) as p:
             assert not await client.read_heating_setpoint()
+
+    async def test_client_sharing(self):
+        """Test that clients for different systems on the same tty reuse the same core client."""
+        c1 = await BryantEvolutionLocalClient.get_client(1, 1, "/dev/null")
+        c2 = await BryantEvolutionLocalClient.get_client(1, 2, "/dev/null")
+        c3 = await BryantEvolutionLocalClient.get_client(1, 2, "/dev/zero")
+        assert c1._client is c2._client
+        assert c1._client is not c3._client
 
 
 if __name__ == "__main__":

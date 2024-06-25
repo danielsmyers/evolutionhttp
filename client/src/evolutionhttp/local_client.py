@@ -17,9 +17,10 @@ def _is_write(cmd: str) -> bool:
 
 
 class _CoreClient:
-    """Implementation of BryantEvolutionLocalClient. 
+    """Implementation of BryantEvolutionLocalClient.
     Differs in that it does not bind the system and zone.
     """
+
     class DevIO(ABC):
         @abstractmethod
         async def write(self, s: str) -> None:
