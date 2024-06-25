@@ -131,7 +131,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         file_chunks_iter = iter(read_file_chunks)
 
         mock_file_stream = mock.MagicMock(
-            readline=lambda *args, **kwargs: next(file_chunks_iter)
+            readline=lambda *args, **kwargs: next(file_chunks_iter),
         )
 
         client: BryantEvolutionLocalClient = None

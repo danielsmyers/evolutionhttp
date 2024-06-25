@@ -6,7 +6,6 @@ import re
 
 from abc import ABC, abstractmethod
 from typing import Dict, Optional, Tuple
-from .client import _parse_temperature
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -15,6 +14,12 @@ def _is_write(cmd: str) -> bool:
     """Return whether cmd is a write."""
     return "!" in cmd
 
+def _parse_temperature(response: Optional[str]) -> Optional[int]:
+    if response is not None:
+        m = re.match("([0-9]+)[A-Z]", response)  # E.g., 72F
+        if m and m.group(1):
+            return int(m.group(1))
+    return None
 
 class _CoreClient:
     """Implementation of BryantEvolutionLocalClient.
@@ -172,6 +177,7 @@ class _CoreClient:
         parts = result.split(":")
         if len(parts) != 2:
             _LOGGER.error("Unparseable response: %s" % result)
+            return None
         return parts[1]
 
     async def _maybe_process_commands(self) -> None:
@@ -220,13 +226,14 @@ class BryantEvolutionLocalClient:
 
     @classmethod
     async def get_client(cls, system_id: int, zone_id: int, tty: str):
-        core_client = cls._core_client_registry.get(tty, None)
-        if not core_client:
+        core_client_fut = cls._core_client_registry.get(tty, None)
+        if not core_client_fut:
+            core_client_fut = asyncio.get_running_loop().create_future()
+            cls._core_client_registry[tty] = core_client_fut
             io = _CoreClient.ProdDevIO(tty)
             await io.open()
-            core_client = _CoreClient(io)
-            cls._core_client_registry[tty] = core_client
-        return BryantEvolutionLocalClient(system_id, zone_id, core_client)
+            core_client_fut.set_result(_CoreClient(io))
+        return BryantEvolutionLocalClient(system_id, zone_id, await core_client_fut)
 
     async def read_current_temperature(self) -> Optional[int]:
         """Reads the current temperature."""
