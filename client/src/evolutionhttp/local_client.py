@@ -192,13 +192,19 @@ class _CoreClient:
         self._is_cmd_active = True
 
         # Send the command and wait for the response
-        await self._device.write(cmd)
         response = None
-        try:
-            async with asyncio.timeout(self._timeout_sec):
-                response = await self._device.read_next()
-        except TimeoutError:
-            _LOGGER.error("Timeout waiting for response to %s" % cmd)
+        cmd_verb = cmd.split('!')[0] if _is_write(cmd) else cmd.split('?')[0]
+        for attempt in [0, 1, 2]:
+            await self._device.write(cmd)
+            response = None
+            try:
+                async with asyncio.timeout(self._timeout_sec):
+                    response = await self._device.read_next()
+                    if response.startswith(cmd_verb) and not "NAK" in response:
+                        break
+                    _LOGGER.error("Bad response to command %s: %s", cmd, response)
+            except TimeoutError:
+                _LOGGER.error("Timeout waiting for response to %s" % cmd)
         self._is_cmd_active = False
         fut.set_result(response)
 

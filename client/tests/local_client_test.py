@@ -135,11 +135,38 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         )
 
         client: BryantEvolutionLocalClient = None
-        with mock.patch(
+        with patch(
             "aiofiles.threadpool.sync_open", return_value=mock_file_stream
         ) as mock_open:
             client = await BryantEvolutionLocalClient.get_client(
-                1, 1, "unused_filename"
+                1, 1, "test_file_io"
+            )
+
+        assert await client.set_heating_setpoint(97)
+        mock_file_stream.write.assert_called_with(b"S1Z1HTSP!97\n")
+        assert await client.read_heating_setpoint() == 97
+        mock_file_stream.write.assert_called_with(b"S1Z1HTSP?\n")
+
+    async def test_retries(self):
+        """Test that the device retries NAK and corrupted errors."""
+        read_file_chunks = [
+            b"S1Z1HTSP:NAK\n",
+            b"bogus\n",
+            b"S1Z1HTSP:ACK\n",
+            b"S1Z1HTSP:97\xf8F\n",
+        ]
+        file_chunks_iter = iter(read_file_chunks)
+
+        mock_file_stream = mock.MagicMock(
+            readline=lambda *args, **kwargs: next(file_chunks_iter),
+        )
+
+        client: BryantEvolutionLocalClient = None
+        with patch(
+            "aiofiles.threadpool.sync_open", return_value=mock_file_stream
+        ) as mock_open:
+            client = await BryantEvolutionLocalClient.get_client(
+                1, 1, "test_retries"
             )
 
         assert await client.set_heating_setpoint(97)
