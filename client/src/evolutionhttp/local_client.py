@@ -223,7 +223,7 @@ class BryantEvolutionLocalClient:
     On a non-successful set_* call, the set may or may not have occurred.
     """
 
-    _core_client_registry: Dict[str, _CoreClient] = {}
+    _core_client_registry: Dict[str, asyncio.Future[_CoreClient]] = {}
 
     def __init__(self, system_id: int, zone_id: int, client: _CoreClient):
         self._system_id = system_id
@@ -287,3 +287,14 @@ class BryantEvolutionLocalClient:
     async def set_fan_mode(self, fan_mode: str) -> bool:
         """Sets the fan mode."""
         return await self._client.set_fan_mode(self._system_id, self._zone_id, fan_mode)
+
+    @staticmethod
+    async def enumerate_zones(system_id: int, tty: str) -> list[int]:
+        """Return which zones exist for system_id on tty."""
+        max_zones = 8
+        zones = []
+        for zone_id in range(1, max_zones + 1):
+            client = await BryantEvolutionLocalClient.get_client(system_id, zone_id, tty)
+            if await client.read_current_temperature() is not None:
+                zones.append(zone_id)
+        return zones

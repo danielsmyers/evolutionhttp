@@ -191,6 +191,22 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         assert c1._client is c2._client
         assert c1._client is not c3._client
 
+    async def test_enumerate(self):
+        """Test that enumerating zones works."""
+        io = FakeDevIO()
+        io._state = {
+            "S1Z1RT": "71\xf8F",
+            "S1Z3RT": "72\xf8F",
+            "S2Z7RT": "77\xf8F",
+            "S2Z4RT": "74\xf8F",
+        }
+        tty = "/dev/ttyUSB47"
+        client_fut = asyncio.get_running_loop().create_future()
+        client_fut.set_result(_CoreClient(io))
+        with patch.object(BryantEvolutionLocalClient, "_core_client_registry", {tty: client_fut}):
+            assert await BryantEvolutionLocalClient.enumerate_zones(1, tty) == [1, 3]
+            assert await BryantEvolutionLocalClient.enumerate_zones(2, tty) == [4, 7]
+
 
 if __name__ == "__main__":
     unittest.main()
