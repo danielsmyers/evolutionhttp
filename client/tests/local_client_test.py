@@ -24,6 +24,8 @@ class FakeDevIO(_CoreClient.DevIO):
             "S1Z1HTSP": "70\xf8F",
             "S2MODE": "COOL 1",
             "S2Z2CLSP": "60\xf8F",
+            "S1Z1NAME": "S1Z1",
+            "S2Z2NAME": "S2Z2"
         }
         self._next_resp = None
         self._allow_reads = True
@@ -100,6 +102,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hvac_mode, ("HEAT", False))
         self.assertEqual(cooling_setpoint, 75)
         self.assertEqual(heating_setpoint, 70)
+        self.assertEqual(await client.read_zone_name(), "S1Z1")
 
         # Test setting values
         self.assertTrue(await client.set_fan_mode("LOW"))
@@ -121,6 +124,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         client = BryantEvolutionLocalClient(2, 2, _CoreClient(FakeDevIO()))
         self.assertEqual(await client.read_hvac_mode(), ("COOL", True))
         self.assertEqual(await client.read_cooling_setpoint(), 60)
+        self.assertEqual(await client.read_zone_name(), "S2Z2")
 
     async def test_file_io(self):
         """Test the real device I/O type with a mock file."""

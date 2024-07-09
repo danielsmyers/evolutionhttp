@@ -69,6 +69,9 @@ class _CoreClient:
         self._pending_writes: list[Tuple[str, asyncio.Future[str | None]]] = []
         self._is_cmd_active: bool = False
 
+    async def read_zone_name(self, system_id: int, zone_id: int) -> Optional[str]:
+        return await self._send_command(f"S{system_id}Z{zone_id}NAME?")
+
     async def read_current_temperature(
         self, system_id: int, zone_id: int
     ) -> Optional[int]:
@@ -240,6 +243,9 @@ class BryantEvolutionLocalClient:
             await io.open()
             core_client_fut.set_result(_CoreClient(io))
         return BryantEvolutionLocalClient(system_id, zone_id, await core_client_fut)
+    
+    async def read_zone_name(self) -> Optional[str]:
+        return await self._client.read_zone_name(self._system_id, self._zone_id)
 
     async def read_current_temperature(self) -> Optional[int]:
         """Reads the current temperature."""
