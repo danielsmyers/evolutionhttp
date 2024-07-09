@@ -5,6 +5,7 @@ import os
 import re
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 _LOGGER = logging.getLogger(__name__)
@@ -202,10 +203,11 @@ class _CoreClient:
             response = None
             try:
                 async with asyncio.timeout(self._timeout_sec):
-                    response = await self._device.read_next()
-                    if response.startswith(cmd_verb) and not "NAK" in response:
+                    r = await self._device.read_next()
+                    if r.startswith(cmd_verb) and not "NAK" in r:
+                        response = r
                         break
-                    _LOGGER.error("Bad response to command %s: %s", cmd, response)
+                    _LOGGER.error("Bad response to command %s: '%s'", cmd, response)
             except TimeoutError:
                 _LOGGER.error("Timeout waiting for response to %s" % cmd)
         self._is_cmd_active = False
@@ -213,6 +215,13 @@ class _CoreClient:
 
         # Continue processing commands if need be.
         await self._maybe_process_commands()
+
+@dataclass(frozen=True)
+class ZoneInfo:
+    system_id: int
+    zone_id: int
+    name: str
+
 
 
 class BryantEvolutionLocalClient:
@@ -295,12 +304,12 @@ class BryantEvolutionLocalClient:
         return await self._client.set_fan_mode(self._system_id, self._zone_id, fan_mode)
 
     @staticmethod
-    async def enumerate_zones(system_id: int, tty: str) -> list[int]:
+    async def enumerate_zones(system_id: int, tty: str) -> list[ZoneInfo]:
         """Return which zones exist for system_id on tty."""
         max_zones = 8
-        zones = []
+        zones: list[ZoneInfo] = []
         for zone_id in range(1, max_zones + 1):
             client = await BryantEvolutionLocalClient.get_client(system_id, zone_id, tty)
-            if await client.read_current_temperature() is not None:
-                zones.append(zone_id)
+            if (name := await client.read_zone_name()) is not None:
+                zones.append(ZoneInfo(system_id=system_id, zone_id=zone_id, name=name))
         return zones

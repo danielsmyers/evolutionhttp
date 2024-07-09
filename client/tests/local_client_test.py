@@ -4,7 +4,7 @@ import logging
 import mock
 import unittest
 
-from src.evolutionhttp import BryantEvolutionLocalClient, _CoreClient
+from src.evolutionhttp import BryantEvolutionLocalClient, _CoreClient, ZoneInfo
 from mock import patch
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class FakeDevIO(_CoreClient.DevIO):
             # Handle read
             key = cmd.split("?")[0]
             if key not in self._state:
-                self._next_resp = "key:NAK"
+                self._next_resp = f"{key}:NAK"
             else:
                 self._next_resp = f"{key}:{self._state[key]}".encode(
                     "ascii", errors="ignore"
@@ -117,7 +117,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
 
         # Test error handling (invalid command)
         result = await client._client._send_command("INVALID_COMMAND")
-        self.assertEqual(result, "NAK")
+        self.assertEqual(result, None)
 
     async def test_second_system(self):
         """Test working with S2 instead of S1."""
@@ -125,6 +125,7 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await client.read_hvac_mode(), ("COOL", True))
         self.assertEqual(await client.read_cooling_setpoint(), 60)
         self.assertEqual(await client.read_zone_name(), "S2Z2")
+
 
     async def test_file_io(self):
         """Test the real device I/O type with a mock file."""
@@ -199,17 +200,23 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         """Test that enumerating zones works."""
         io = FakeDevIO()
         io._state = {
-            "S1Z1RT": "71\xf8F",
-            "S1Z3RT": "72\xf8F",
-            "S2Z7RT": "77\xf8F",
-            "S2Z4RT": "74\xf8F",
+            "S1Z1NAME": "S1Z1",
+            "S1Z3NAME": "S1Z3",
+            "S2Z7NAME": "S2Z7",
+            "S2Z4NAME": "S2Z4",
         }
         tty = "/dev/ttyUSB47"
         client_fut = asyncio.get_running_loop().create_future()
         client_fut.set_result(_CoreClient(io))
         with patch.object(BryantEvolutionLocalClient, "_core_client_registry", {tty: client_fut}):
-            assert await BryantEvolutionLocalClient.enumerate_zones(1, tty) == [1, 3]
-            assert await BryantEvolutionLocalClient.enumerate_zones(2, tty) == [4, 7]
+            assert await BryantEvolutionLocalClient.enumerate_zones(1, tty) == [
+                ZoneInfo(system_id=1, zone_id=1, name="S1Z1"), 
+                ZoneInfo(system_id=1, zone_id=3, name="S1Z3"), 
+            ]
+            assert await BryantEvolutionLocalClient.enumerate_zones(2, tty) == [
+                ZoneInfo(system_id=2, zone_id=4, name="S2Z4"), 
+                ZoneInfo(system_id=2, zone_id=7, name="S2Z7"), 
+            ]
 
 
 if __name__ == "__main__":
