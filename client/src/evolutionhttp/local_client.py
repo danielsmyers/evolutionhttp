@@ -188,33 +188,48 @@ class _CoreClient:
         if self._is_cmd_active:
             return
 
-        # Figure out what to do next
         cmd_and_fut = self._maybe_pop_work()
         if cmd_and_fut is None:
             return
+            
         (cmd, fut) = cmd_and_fut
         self._is_cmd_active = True
 
-        # Send the command and wait for the response
-        response = None
-        cmd_verb = cmd.split('!')[0] if _is_write(cmd) else cmd.split('?')[0]
-        for attempt in [0, 1, 2]:
-            await self._device.write(cmd)
+        try:
             response = None
-            try:
-                async with asyncio.timeout(self._timeout_sec):
-                    r = await self._device.read_next()
-                    if r.startswith(cmd_verb) and not "NAK" in r:
-                        response = r
-                        break
-                    _LOGGER.error("Bad response to command %s: '%s'", cmd, response)
-            except TimeoutError:
-                _LOGGER.error("Timeout waiting for response to %s" % cmd)
-        self._is_cmd_active = False
-        fut.set_result(response)
+            cmd_verb = cmd.split('!')[0] if _is_write(cmd) else cmd.split('?')[0]
+            
+            # Retry loop for communication attempts
+            for attempt in range(3):
+                await self._device.write(cmd)
+                response = None
+                try:
+                    async with asyncio.timeout(self._timeout_sec):
+                        r = await self._device.read_next()
+                        # Check for a valid, non-NAK response
+                        if r.startswith(cmd_verb) and "NAK" not in r:
+                            response = r
+                            break  # Success, exit retry loop
+                    _LOGGER.warning("Bad or unexpected response to command %s: '%s'", cmd, r)
+                except TimeoutError:
+                    _LOGGER.warning("Timeout for command %s (attempt %d/3)", cmd, attempt + 1)
+            
+            # After all attempts, resolve the future with the response (which is None on failure)
+            fut.set_result(response)
 
-        # Continue processing commands if need be.
-        await self._maybe_process_commands()
+        except Exception as e:
+            # This is the crucial block for catching unexpected I/O errors
+            _LOGGER.error("Unhandled exception processing command %s: %s", cmd, e, exc_info=True)
+            # Notify the waiting task that an error occurred so it doesn't hang
+            if not fut.done():
+                fut.set_exception(e)
+
+        finally:
+            # This GUARANTEES that the lock is released and the queue continues processing
+            self._is_cmd_active = False
+            
+            # Schedule the next command in the queue to be processed
+            await self._maybe_process_commands()
 
 @dataclass(frozen=True)
 class ZoneInfo:
