@@ -205,11 +205,17 @@ class _CoreClient:
                 response = None
                 try:
                     async with asyncio.timeout(self._timeout_sec):
-                        r = await self._device.read_next()
-                        # Check for a valid, non-NAK response
-                        if r.startswith(cmd_verb) and "NAK" not in r:
-                            response = r
-                            break  # Success, exit retry loop
+                        while True:
+                            r = await self._device.read_next()
+                            # Check for a valid, non-NAK response
+                            if r.startswith(cmd_verb):
+                                if "NAK" not in r:
+                                    response = r
+                                break  # Found matching response (Success or NAK)
+                    
+                    if response:
+                        break  # Success, exit retry loop
+                    
                     _LOGGER.warning("Bad or unexpected response to command %s: '%s'", cmd, r)
                 except TimeoutError:
                     _LOGGER.warning("Timeout for command %s (attempt %d/3)", cmd, attempt + 1)
