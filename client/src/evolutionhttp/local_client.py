@@ -53,11 +53,10 @@ class _CoreClient:
 
         async def read_next(self) -> str:
             while True:
-                s: str = (
-                    (await self._file.readline())
-                    .decode("ascii", errors="ignore")
-                    .strip()
-                )
+                line = await self._file.readline()
+                if not line:
+                    raise OSError("SAM module disconnected (EOF)")
+                s: str = line.decode("ascii", errors="ignore").strip()
                 if s != "":
                     return s
 
