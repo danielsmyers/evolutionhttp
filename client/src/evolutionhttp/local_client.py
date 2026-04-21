@@ -64,6 +64,9 @@ class _CoreClient:
     # How long to wait for a response from the device.
     _timeout_sec = 6
 
+    # How long to wait between commands to allow the device to process.
+    _inter_command_delay_sec = 0.1
+
     def __init__(self, device: DevIO):
         self._device = device
         self._pending_reads: list[Tuple[str, asyncio.Future[str | None]]] = []
@@ -225,6 +228,8 @@ class _CoreClient:
                 fut.set_exception(e)
 
         finally:
+            if self._inter_command_delay_sec > 0:
+                await asyncio.sleep(self._inter_command_delay_sec)
             # This GUARANTEES that the lock is released and the queue continues processing
             self._is_cmd_active = False
             
