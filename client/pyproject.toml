@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "evolutionhttp"
-version = "0.0.18"
+version = "0.1.0"
 authors = [
   { name = "Daniel Myers", email = "danielsmyers@gmail.com" },
 ]
@@ -15,6 +15,15 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
+]
+dependencies = [
+    # The HTTP client has always needed this; it was simply never declared.
+    "aiohttp",
+    # Imported directly for the 8N1 constants.
+    "pyserial>=3.5",
+    # The asyncio wrapper Home Assistant ships, rather than the barely
+    # maintained pyserial-asyncio it forked from.
+    "pyserial-asyncio-fast>=0.13",
 ]
 
 [project.urls]

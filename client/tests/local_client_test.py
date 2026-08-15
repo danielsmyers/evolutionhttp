@@ -61,6 +61,15 @@ class FakePort:
 
 
 
+def _fd_released(fd: int) -> bool:
+    """Whether a descriptor has actually been closed."""
+    try:
+        os.fstat(fd)
+    except OSError:
+        return True
+    return False
+
+
 async def _wait_until(predicate, timeout=5.0):
     """Await a condition rather than guessing with a fixed sleep."""
     loop = asyncio.get_running_loop()
@@ -426,11 +435,11 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
             "the discarded head was spliced onto the next reply",
         )
 
-    async def test_termios_is_actually_applied(self):
+    async def test_termios_is_correct(self):
         """Echo in particular must be off: the port would otherwise return our
         own commands as if they were replies."""
         port, io = await self._open_port()
-        attrs = termios.tcgetattr(io._read_transport.get_extra_info("pipe").fileno())
+        attrs = termios.tcgetattr(io._transport.serial.fileno())
         iflag, oflag, cflag, lflag = attrs[0], attrs[1], attrs[2], attrs[3]
         self.assertFalse(lflag & termios.ECHO, "echo left on")
         self.assertFalse(lflag & termios.ICANON, "canonical mode left on")
@@ -483,11 +492,11 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
     async def test_close_releases_the_port(self):
         """Closing must release the descriptors, not merely stop reading."""
         port, io = await self._open_port()
-        fd = io._read_transport.get_extra_info("pipe").fileno()
+        fd = io._transport.serial.fileno()
         await io.close()
-        await asyncio.sleep(0)  # transports close their file on the next tick
-        with self.assertRaises(OSError, msg="descriptor was not released"):
-            os.fstat(fd)
+        # pyserial's transport defers the real close, so wait for it rather
+        # than assuming it lands within one loop iteration.
+        await _wait_until(lambda: _fd_released(fd), 2.0)
         # A second close is a no-op rather than an error.
         await io.close()
 
@@ -504,11 +513,9 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
             hasattr(z1, "close"), "a view must not offer a lifecycle it does not own"
         )
 
-        fd = conn._device._read_transport.get_extra_info("pipe").fileno()
+        fd = conn._device._transport.serial.fileno()
         await conn.close()
-        await asyncio.sleep(0)
-        with self.assertRaises(OSError, msg="the port was not released"):
-            os.fstat(fd)
+        await _wait_until(lambda: _fd_released(fd), 2.0)
 
     async def test_connection_is_an_async_context_manager(self):
         """Enumeration during a config flow should not leak the port."""
@@ -516,12 +523,10 @@ class TestBryantEvolutionLocalClient(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(port.close)
 
         conn = await BryantEvolutionConnection.open(port.path)
-        fd = conn._device._read_transport.get_extra_info("pipe").fileno()
+        fd = conn._device._transport.serial.fileno()
         async with conn:
             self.assertIsNotNone(conn.zone(1, 1))
-        await asyncio.sleep(0)
-        with self.assertRaises(OSError, msg="the port outlived the with block"):
-            os.fstat(fd)
+        await _wait_until(lambda: _fd_released(fd), 2.0)
 
     async def test_failed_open_leaks_nothing(self):
         """A port that cannot be opened leaves no state to clean up.

@@ -1,14 +1,9 @@
 import asyncio
 import logging
-import os
 import re
 
-try:
-    import termios
-except ImportError:  # pragma: no cover - Windows: the serial client is Unix-only
-    # This module is imported by the package __init__, so a hard import would
-    # make the platform-neutral HTTP client unimportable on Windows too.
-    termios = None
+import serial
+import serial_asyncio_fast
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -72,57 +67,54 @@ class ProdDevIO(DevIO, asyncio.Protocol):
         self._lines: asyncio.Queue = asyncio.Queue()
         # Bytes not yet forming a complete line.
         self._buf = b""
-        self._read_transport: Optional[asyncio.ReadTransport] = None
-        self._write_transport: Optional[asyncio.WriteTransport] = None
+        self._transport: Optional[asyncio.Transport] = None
         # Set by close() so that the connection_lost() it causes is not
         # reported as the port having gone away on its own.
         self._closing = False
 
     async def open(self) -> None:
-        loop = asyncio.get_running_loop()
-        self._closing = False
-        # O_NONBLOCK: opening a tty blocks until carrier unless CLOCAL is set,
-        # and CLOCAL is one of the inherited flags this class refuses to trust
-        # -- it cannot be corrected until the port is already open. A blocking
-        # open here would freeze the event loop, not merely this coroutine.
-        # O_NOCTTY: opening a tty must not make it a controlling terminal.
-        fd = os.open(self._tty, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-        # One open, two descriptors: asyncio's pipe transports each take
-        # ownership of the file object they are given, and opening the device a
-        # second time would pulse DTR on some USB adapters.
-        read_file = os.fdopen(fd, "rb", 0)
-        try:
-            self._configure_serial(read_file.fileno())
-            self._read_transport, _ = await loop.connect_read_pipe(
-                lambda: self, read_file
-            )
-        except BaseException:
-            read_file.close()
-            raise
+        """Open the port raw at 9600 8N1, with no flow control of any kind.
 
-        write_file = None
-        try:
-            write_file = os.fdopen(os.dup(fd), "wb", 0)
-            self._write_transport, _ = await loop.connect_write_pipe(
-                asyncio.BaseProtocol, write_file
-            )
-        except BaseException:
-            if write_file is not None:
-                write_file.close()
-            self._read_transport.close()
-            self._read_transport = None
-            raise
+        Raw matters, and is why none of it is left to whatever last opened the
+        port: in canonical mode the tty line discipline interprets received
+        data, treating 0x15 as VKILL (erases the whole buffered line) and 0x7f
+        as VERASE (deletes a character), so one corrupted byte on the wire
+        becomes a multi-byte deletion in the frame we read. Framing is done in
+        data_received() instead, where it is explicit and testable.
+
+        pyserial writes the whole termios state rather than adjusting parts of
+        the inherited one, so the flags that corrupt this protocol silently are
+        cleared by construction: ICANON, ECHO, ISIG, IEXTEN, OPOST, ICRNL and
+        ISTRIP all end up off. test_termios_is_correct asserts that, because it
+        is something this protocol depends on rather than something to take on
+        faith from a dependency.
+        """
+        self._closing = False
+        self._transport, _ = await serial_asyncio_fast.create_serial_connection(
+            asyncio.get_running_loop(),
+            lambda: self,
+            self._tty,
+            baudrate=9600,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            # XON/XOFF: a stray 0x13 would stall the link until a 0x11 happened
+            #   along, which reads as unexplained timeouts.
+            xonxoff=False,
+            # RTS/CTS: inherited hardware flow control on a 3-wire cable with
+            #   RTS/CTS unwired blocks every write forever.
+            rtscts=False,
+            dsrdtr=False,
+        )
 
     async def close(self) -> None:
-        """Release the port. Closing a transport closes its descriptor."""
-        # Flagged before the close, because closing the read transport is what
+        """Release the port. Closing the transport closes the descriptor."""
+        # Flagged before the close, because closing the transport is what
         # triggers connection_lost().
         self._closing = True
-        for transport in (self._read_transport, self._write_transport):
-            if transport is not None:
-                transport.close()
-        self._read_transport = None
-        self._write_transport = None
+        if self._transport is not None:
+            self._transport.close()
+            self._transport = None
 
     def connection_lost(self, exc: Optional[Exception]) -> None:
         """asyncio.Protocol: the port went away (adapter unplugged, hangup).
@@ -140,72 +132,12 @@ class ProdDevIO(DevIO, asyncio.Protocol):
             return
         _LOGGER.warning("Connection to %s lost: %s", self._tty, exc or "hangup")
 
-    def _configure_serial(self, fd: int) -> None:
-        """Configure the port for raw 9600 8N1.
-
-        Raw matters: in canonical mode the tty line discipline interprets
-        received data, treating 0x15 as VKILL (erases the whole buffered line)
-        and 0x7f as VERASE (deletes a character), so one corrupted byte on the
-        wire becomes a multi-byte deletion in the frame we read. Framing is
-        done in data_received() instead, where it is explicit and testable.
-        """
-        try:
-            iflag, oflag, cflag, lflag, _ispeed, _ospeed, cc = termios.tcgetattr(fd)
-            # VMIN/VTIME are not set: the read transport puts the descriptor in
-            # O_NONBLOCK, under which they are ignored.
-
-            # Every flag below is asserted rather than inherited: they carry
-            # over from whatever last opened the port, and several of them
-            # corrupt this protocol silently rather than loudly.
-            lflag &= ~(termios.ICANON | termios.ECHO | termios.ISIG | termios.IEXTEN)
-
-            # IXON/IXOFF: a stray 0x13 (XOFF) would stall the link until a
-            #   0x11 happened along, which reads as unexplained timeouts.
-            # ISTRIP: clears bit 7, turning the degree byte (0xb0, measured on
-            #   the wire) of a temperature reply into 0x30, i.e. '0'. That is
-            #   valid ASCII, so it survives the decode in data_received() and
-            #   reaches _parse_temperature, where "72\xb0F" has become "720F"
-            #   and matches "digits then [A-Z]" as 720. Every temperature read
-            #   comes back plausible and wrong rather than None.
-            # INLCR/IGNCR/ICRNL: translate line endings. data_received()
-            #   handles terminators, so the driver must not also rewrite them.
-            # BRKINT: a line break would flush both queues mid-frame.
-            iflag &= ~(
-                termios.IXON
-                | termios.IXOFF
-                | termios.ISTRIP
-                | termios.BRKINT
-                | termios.INLCR
-                | termios.IGNCR
-                | termios.ICRNL
-            )
-
-            # No output translation: write() emits the CR/LF terminator the
-            # protocol requires, so the driver must not add or rewrite one.
-            oflag &= ~termios.OPOST
-
-            # 9600 8N1, receiver on, ignore modem control lines. CRTSCTS is
-            # cleared explicitly: inherited hardware flow control on a 3-wire
-            # cable with RTS/CTS unwired blocks every write forever.
-            cflag &= ~(termios.CSIZE | termios.PARENB | termios.CSTOPB)
-            cflag &= ~getattr(termios, "CRTSCTS", 0)
-            cflag |= termios.CS8 | termios.CREAD | termios.CLOCAL
-
-            termios.tcsetattr(
-                fd,
-                termios.TCSANOW,
-                [iflag, oflag, cflag, lflag, termios.B9600, termios.B9600, cc],
-            )
-            termios.tcflush(fd, termios.TCIOFLUSH)
-        except Exception as e:  # noqa: BLE001 - best effort, must not block open()
-            # Non-fatal: a port that cannot be configured (not a tty, an
-            # unusual driver) should still be usable.
-            _LOGGER.warning("Could not configure serial port %s: %s", self._tty, e)
-
     async def write(self, s: str) -> None:
         # CR/LF is the protocol's command terminator, written explicitly rather
-        # than relying on the tty driver to expand a bare newline.
-        self._write_transport.write(f"{s}\r\n".encode("ascii"))
+        # than relying on the tty driver to expand a bare newline. The device
+        # requires both: measured on the hardware, a bare LF or a bare CR gets
+        # no reply at all.
+        self._transport.write(f"{s}\r\n".encode("ascii"))
 
     def data_received(self, data: bytes) -> None:
         """asyncio.Protocol: assemble received bytes into lines."""
@@ -274,11 +206,10 @@ class ProdDevIO(DevIO, asyncio.Protocol):
             )
         self._buf = b""
 
-        if self._read_transport is None:
+        if self._transport is None:
             return
         try:
-            termios.tcflush(self._read_transport.get_extra_info("pipe").fileno(),
-                            termios.TCIFLUSH)
+            self._transport.serial.reset_input_buffer()
         except Exception as e:  # noqa: BLE001 - stand-in port (FIFO, plain file)
             _LOGGER.debug("Could not flush input on %s: %s", self._tty, e)
 
